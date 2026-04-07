@@ -59,6 +59,24 @@ a:hover {
     text-decoration: underline;
 }
 
+/* Section cards on contact detail page */
+.detail-card {
+    background: var(--s);
+    border: 1px solid var(--b);
+    border-radius: var(--rad);
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.detail-card-header {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: #fff;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+
 input, select, textarea {
     font-family: inherit;
     font-size: 14px;

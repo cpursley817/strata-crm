@@ -342,7 +342,7 @@ async function viewSectionDetail(sectionId) {
         data.owners.forEach(o => {
             h += `<tr style="cursor:pointer" onclick="viewOwnerDetail(${o.owner_id})">
                 <td style="padding:8px;color:var(--ac);font-weight:500">${esc(o.full_name || '')}</td>
-                <td style="padding:8px">${o.phone_1 ? `<a href="tel:${o.phone_1}" style="color:var(--ac)">${esc(o.phone_1)}</a>` : '<span style="color:var(--td)">-</span>'}</td>
+                <td style="padding:8px">${o.phone_1 ? `<a href="tel:${sanitizePhone(o.phone_1)}" style="color:var(--ac)">${esc(formatPhone(o.phone_1))}</a>` : '<span style="color:var(--td)">-</span>'}</td>
                 <td style="padding:8px">${o.email_1 ? `<a href="mailto:${o.email_1}" style="color:var(--ac)">${esc(o.email_1)}</a>` : '<span style="color:var(--td)">-</span>'}</td>
                 <td style="padding:8px">${esc(o.city || '')}</td>
                 <td style="padding:8px;text-align:right;font-weight:500">${o.nra || '-'}</td>

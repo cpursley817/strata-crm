@@ -161,7 +161,7 @@ async function loadOwners(page = 1) {
         const phoneCell = row.insertCell();
         if (phone) {
             const star = o.phone_1_verified ? '<span style="color:var(--y);margin-right:2px" title="Verified">\u2605</span>' : '';
-            phoneCell.innerHTML = `${star}<a href="tel:${phone}" style="color:var(--ac)">${esc(phone)}</a>`;
+            phoneCell.innerHTML = `${star}<a href="tel:${sanitizePhone(phone)}" style="color:var(--ac)">${esc(formatPhone(phone))}</a>`;
         } else {
             phoneCell.innerHTML = '<span style="color:var(--td)">-</span>';
         }
@@ -322,8 +322,8 @@ async function viewOwnerDetail(ownerId) {
     h += '<div id="owner-tab-contact-info" class="owner-tab-content active">';
 
     // ── CONTACT INFO SECTION ──
-    h += `<div style="margin-bottom:20px">
-        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#fff;font-weight:700;margin-bottom:10px">Contact Information</div>
+    h += `<div class="detail-card">
+        <div class="detail-card-header">Contact Information</div>
         <div class="owner-info-grid">`;
 
     // Name breakdown
@@ -356,8 +356,8 @@ async function viewOwnerDetail(ownerId) {
     // ── ALTERNATE ADDRESS ──
     if (data.alt_address) {
         const altParts = [data.alt_address, [data.alt_city, data.alt_state].filter(Boolean).join(', ') + (data.alt_zip ? ' ' + data.alt_zip : '')].filter(Boolean);
-        h += `<div style="margin-bottom:20px">
-            <div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#fff;font-weight:700;margin-bottom:10px">Alternate Addresses (1)</div>
+        h += `<div class="detail-card">
+            <div class="detail-card-header">Alternate Addresses (1)</div>
             <div style="padding:8px 12px;background:var(--s2);border:1px solid var(--b);border-radius:6px;display:flex;justify-content:space-between;align-items:center">
                 <span style="color:#fff;font-size:13px">${altParts.map(p => esc(p)).join(', ')}</span>
                 ${sourceBadge('ais_sql_dump')}
@@ -376,8 +376,8 @@ async function viewOwnerDetail(ownerId) {
     ].filter(f => data[f.key] === 1);
 
     if (flags.length > 0) {
-        h += `<div style="margin-bottom:20px;border-left:3px solid var(--r);padding-left:12px">
-            <div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--r);font-weight:700;margin-bottom:10px">Risk Flags (${flags.length})</div>
+        h += `<div class="detail-card" style="border-left:3px solid var(--r)">
+            <div class="detail-card-header" style="color:var(--r)">Risk Flags (${flags.length})</div>
             <div style="display:flex;flex-wrap:wrap;gap:6px">`;
         flags.forEach(f => {
             h += `<span style="display:inline-block;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;background:rgba(255,103,29,.12);color:${f.color};border:1px solid rgba(255,103,29,.25)">${f.label}</span>`;
@@ -403,8 +403,8 @@ async function viewOwnerDetail(ownerId) {
         return (b.verified === 1) - (a.verified === 1);
     });
 
-    h += `<div style="margin-bottom:20px">
-        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#fff;font-weight:700;margin-bottom:10px">Phone Numbers (${phoneData.length})</div>`;
+    h += `<div class="detail-card">
+        <div class="detail-card-header">Phone Numbers (${phoneData.length})</div>`;
     if (phoneData.length > 0) {
         phoneData.forEach(p => {
             const srcTag = p.source ? sourceBadge(p.source) : '';
@@ -415,7 +415,7 @@ async function viewOwnerDetail(ownerId) {
             const phoneSlot = p.field ? parseInt(p.field.replace('phone_', '')) : null;
             const deleteBtn = phoneSlot ? `<button style="margin-left:auto;background:var(--r);color:#fff;border:none;border-radius:4px;padding:2px 10px;font-size:10px;font-weight:600;cursor:pointer" onclick="event.stopPropagation();deletePhoneField(${data.owner_id}, ${phoneSlot})">Delete</button>` : '';
             h += `<div style="padding:6px 0;border-bottom:1px solid var(--b);display:flex;align-items:center;gap:8px">
-                ${starHtml}<a href="tel:${sanitizePhone(p.num)}" style="color:#fff;font-size:13px;text-decoration:none">${esc(p.num)}</a>${srcTag}${typeTag}${seenTag}${deleteBtn}
+                ${starHtml}<a href="tel:${sanitizePhone(p.num)}" style="color:#fff;font-size:13px;text-decoration:none">${esc(formatPhone(p.num))}</a>${srcTag}${typeTag}${seenTag}${deleteBtn}
             </div>`;
         });
     } else {
@@ -439,8 +439,8 @@ async function viewOwnerDetail(ownerId) {
         return 0;
     });
 
-    h += `<div style="margin-bottom:20px">
-        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#fff;font-weight:700;margin-bottom:10px">Email Addresses (${emailData.length})</div>`;
+    h += `<div class="detail-card">
+        <div class="detail-card-header">Email Addresses (${emailData.length})</div>`;
     if (emailData.length > 0) {
         emailData.forEach(e => {
             const srcTag = e.source ? sourceBadge(e.source) : '';
@@ -457,8 +457,8 @@ async function viewOwnerDetail(ownerId) {
     h += '</div>';
 
     // ── QUICK ACTIONS ──
-    h += `<div style="margin-bottom:20px">
-        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#fff;font-weight:700;margin-bottom:10px">Quick Actions</div>
+    h += `<div class="detail-card">
+        <div class="detail-card-header">Quick Actions</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px">`;
     if (data.phone_1) {
         h += `<a href="sms:${sanitizePhone(data.phone_1)}" style="display:inline-flex;align-items:center;gap:4px;padding:5px 12px;background:var(--s2);border:1px solid var(--b);border-radius:20px;font-size:11px;color:var(--g);text-decoration:none;font-weight:600">💬 Text</a>`;
@@ -473,8 +473,8 @@ async function viewOwnerDetail(ownerId) {
     let relatives = [];
     try { if (data.relatives_json) relatives = JSON.parse(data.relatives_json); } catch(e) {}
     if (relatives.length > 0) {
-        h += `<div style="margin-bottom:20px">
-            <div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#fff;font-weight:700;margin-bottom:10px">Relatives (${relatives.length})</div>`;
+        h += `<div class="detail-card">
+            <div class="detail-card-header">Relatives (${relatives.length})</div>`;
         relatives.forEach(rel => {
             const relAge = rel.estimated_age ? ` · Age: ${rel.estimated_age}` : '';
             const relPhone = rel.phone1 || '';
@@ -499,8 +499,8 @@ async function viewOwnerDetail(ownerId) {
 
     // ── NOTES SECTION ──
     const contactNotes = data.contact_notes || [];
-    h += `<div style="margin-bottom:20px">
-        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#fff;font-weight:700;margin-bottom:10px">Notes (${contactNotes.length})</div>
+    h += `<div class="detail-card">
+        <div class="detail-card-header">Notes (${contactNotes.length})</div>
         <div style="margin-bottom:12px">
             <textarea id="new-note-body" rows="2" style="width:100%;resize:vertical;font-size:13px" placeholder="Add a note..."></textarea>
             <button class="bp" style="margin-top:6px;font-size:12px;padding:6px 14px" onclick="addContactNote(${data.owner_id})">Add Note</button>
@@ -649,7 +649,7 @@ async function loadAssociatedContacts(ownerId) {
         byPhone.forEach(a => {
             h += `<div style="padding:8px 10px;background:var(--s2);margin:4px 0;border-radius:6px;font-size:12px;display:flex;justify-content:space-between;align-items:center;border:1px solid var(--b);cursor:pointer" onclick="viewOwnerDetail(${a.owner_id})">
                 <div><span style="color:var(--ac);font-weight:500">${esc(a.full_name)}</span>${a.classification ? ' ' + classBadge(a.classification) : ''}</div>
-                <div style="text-align:right"><div style="color:var(--td);font-size:11px">${esc(a.phone_1 || '')}</div></div>
+                <div style="text-align:right"><div style="color:var(--td);font-size:11px">${esc(formatPhone(a.phone_1 || ''))}</div></div>
             </div>`;
         });
     }

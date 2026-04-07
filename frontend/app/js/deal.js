@@ -90,7 +90,7 @@ async function viewDealDetail(dealId) {
         <div style="font-weight:500;font-size:15px;color:var(--ac);cursor:pointer;margin-bottom:8px" onclick="viewOwnerDetail(${data.owner_id})">${esc(data.owner_name || 'Unknown')}</div>
         <div style="font-size:12px;color:var(--td)">
             ${data.owner_classification ? classBadge(data.owner_classification) + '<br>' : ''}
-            ${data.owner_phone ? `<a href="tel:${data.owner_phone}" style="color:var(--ac)">${esc(data.owner_phone)}</a><br>` : ''}
+            ${data.owner_phone ? `<a href="tel:${sanitizePhone(data.owner_phone)}" style="color:var(--ac)">${esc(formatPhone(data.owner_phone))}</a><br>` : ''}
             ${data.owner_email ? `<a href="mailto:${data.owner_email}" style="color:var(--ac)">${esc(data.owner_email)}</a><br>` : ''}
             ${[data.owner_city, data.owner_state].filter(Boolean).join(', ') || ''}
         </div>

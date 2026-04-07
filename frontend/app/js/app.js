@@ -137,7 +137,7 @@ async function runGlobalSearch(query) {
                 const loc = [o.city, o.state].filter(Boolean).join(', ');
                 html += `<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--b);font-size:13px" onclick="document.getElementById('global-search-results').classList.add('hidden');document.getElementById('global-search').value='';viewOwnerDetail(${o.owner_id})" onmouseover="this.style.background='var(--b)'" onmouseout="this.style.background=''">
                     <div style="font-weight:500;color:var(--t)">${esc(o.full_name)}</div>
-                    <div style="font-size:11px;color:var(--td)">${esc(o.phone_1 || '')}${loc ? ' · ' + esc(loc) : ''}</div>
+                    <div style="font-size:11px;color:var(--td)">${esc(formatPhone(o.phone_1 || ''))}${loc ? ' · ' + esc(loc) : ''}</div>
                 </div>`;
             });
         }

@@ -91,7 +91,7 @@ async function loadMapMarkers(state, classification, deceased) {
         }).bindPopup(`<strong style="cursor:pointer" onclick="viewOwnerDetail(${o.owner_id})">${esc(o.full_name)}</strong><br>
             ${o.classification ? classBadge(o.classification) : ''}
             ${o.contact_status ? '<br>' + statusBadge(o.contact_status) : ''}
-            ${o.phone_1 ? '<br><a href="tel:' + o.phone_1 + '">' + esc(o.phone_1) + '</a>' : ''}
+            ${o.phone_1 ? '<br><a href="tel:' + sanitizePhone(o.phone_1) + '">' + esc(formatPhone(o.phone_1)) + '</a>' : ''}
             <br>${[o.city, o.state].filter(Boolean).join(', ')}
             <br><a href="#" onclick="viewOwnerDetail(${o.owner_id});return false;" style="font-size:11px">View Profile</a>`);
         markerGroup.addLayer(marker);
