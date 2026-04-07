@@ -1,0 +1,51 @@
+# Database — never commit database files (too large, contains tenant data)
+database/*.db
+database/*.db-shm
+database/*.db-wal
+database/*.backup*
+database/.fuse_hidden*
+database/backups/
+
+# Config — contains API keys and secrets
+config/api_keys.env
+config/*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Uploads and imports — tenant-specific raw data files
+/imports/
+exports/
+
+# Logs
+*.log
+nohup.out
+
+# Temporary files
+*.tmp
+*.bak
+~$*
+
+# One-time scripts and artifacts
+rebrand-strata.ps1
+patch-login.ps1
+Strata_CRM_Schema_Review.xlsx
