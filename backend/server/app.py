@@ -266,48 +266,6 @@ def get_current_user():
         'role': 'admin'
     })
 
-@app.route('/api/users', methods=['GET'])
-@admin_required
-def list_users():
-    users = query_db('''
-        SELECT user_id, name, email, role, is_active, last_login, created_at
-        FROM users ORDER BY name
-    ''')
-    return jsonify(users)
-
-
-@app.route('/api/users', methods=['POST'])
-@admin_required
-def create_user():
-    data = request.json
-    pw_hash = hash_password(data['password'])
-    uid = execute_db(
-        'INSERT INTO users (name, email, role, password_hash) VALUES (?, ?, ?, ?)',
-        (data['name'], data.get('email'), data.get('role', 'buyer'), pw_hash)
-    )
-    return jsonify({'user_id': uid, 'message': 'User created'}), 201
-
-
-@app.route('/api/users/<int:uid>/password', methods=['PUT'])
-@admin_required
-def reset_password(uid):
-    data = request.json
-    pw_hash = hash_password(data['password'])
-    execute_db('UPDATE users SET password_hash = ? WHERE user_id = ?', (pw_hash, uid))
-    return jsonify({'message': 'Password updated'})
-
-
-@app.route('/api/admin/login-log', methods=['GET'])
-@admin_required
-def get_login_log():
-    logs = query_db('''
-        SELECT l.log_id, l.user_id, u.name, l.login_at, l.ip_address
-        FROM login_log l JOIN users u ON l.user_id = u.user_id
-        ORDER BY l.login_at DESC LIMIT 200
-    ''')
-    return jsonify(logs)
-
-
 # ---------------------------------------------------------------------------
 # SECTIONS
 # ---------------------------------------------------------------------------
