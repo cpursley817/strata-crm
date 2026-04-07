@@ -240,6 +240,36 @@ CREATE INDEX idx_ownership_section ON ownership_links(section_id);
 CREATE INDEX idx_ownership_type ON ownership_links(interest_type);
 
 
+-- ALTERNATE ADDRESSES — multiple mailing addresses per owner
+CREATE TABLE alt_addresses (
+    alt_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id        INTEGER NOT NULL REFERENCES owners(owner_id) ON DELETE CASCADE,
+    address         TEXT,
+    apt             TEXT,
+    city            TEXT,
+    state           TEXT,
+    zip_code        TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_alt_addr_owner ON alt_addresses(owner_id);
+
+
+-- ASSOCIATED CONTACTS — shared phone/email/address, c/o, joint names
+CREATE TABLE associated_contacts (
+    assoc_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id_a      INTEGER NOT NULL REFERENCES owners(owner_id) ON DELETE CASCADE,
+    owner_id_b      INTEGER REFERENCES owners(owner_id) ON DELETE CASCADE,
+    name_b          TEXT,
+    relationship    TEXT NOT NULL,
+    shared_value    TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_assoc_a ON associated_contacts(owner_id_a);
+CREATE INDEX idx_assoc_b ON associated_contacts(owner_id_b);
+
+
 -- ============================================================
 -- DEAL PIPELINE
 -- ============================================================

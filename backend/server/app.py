@@ -43,7 +43,7 @@ MAX_IP_ATTEMPTS = 20   # broader IP-level limit before user lookup
 
 def check_rate_limit(db, identifier=None, ip_address=None, user_id=None):
     """Check if login should be throttled. Returns (is_locked, seconds_remaining).
-    Checks both IP-level and user-level limits using the login_attempts table."""
+    v3.0: identifier + ip_address only (no user_id in login_attempts table)."""
     now = time.time()
     cutoff = now - LOCKOUT_SECONDS
 
@@ -51,7 +51,7 @@ def check_rate_limit(db, identifier=None, ip_address=None, user_id=None):
     db.execute('DELETE FROM login_attempts WHERE attempted_at < ?', (cutoff,))
     db.commit()
 
-    # IP-level check (pre-lookup, catches brute-force across multiple usernames)
+    # IP-level check (catches brute-force across multiple usernames)
     if ip_address:
         ip_count = db.execute(
             'SELECT COUNT(*) as cnt FROM login_attempts WHERE ip_address = ? AND attempted_at > ?',
@@ -63,15 +63,15 @@ def check_rate_limit(db, identifier=None, ip_address=None, user_id=None):
             remaining = int(LOCKOUT_SECONDS - (now - oldest)) if oldest else 0
             return True, remaining
 
-    # User-level check (post-lookup, prevents alias bypass)
-    if user_id:
-        user_count = db.execute(
-            'SELECT COUNT(*) as cnt FROM login_attempts WHERE user_id = ? AND attempted_at > ?',
-            (user_id, cutoff)).fetchone()['cnt']
-        if user_count >= MAX_LOGIN_ATTEMPTS:
+    # Identifier-level check (gate password + ip_address only)
+    if identifier and ip_address:
+        id_count = db.execute(
+            'SELECT COUNT(*) as cnt FROM login_attempts WHERE identifier = ? AND ip_address = ? AND attempted_at > ?',
+            (identifier.lower(), ip_address, cutoff)).fetchone()['cnt']
+        if id_count >= MAX_LOGIN_ATTEMPTS:
             oldest = db.execute(
-                'SELECT MIN(attempted_at) as oldest FROM login_attempts WHERE user_id = ? AND attempted_at > ?',
-                (user_id, cutoff)).fetchone()['oldest']
+                'SELECT MIN(attempted_at) as oldest FROM login_attempts WHERE identifier = ? AND ip_address = ? AND attempted_at > ?',
+                (identifier.lower(), ip_address, cutoff)).fetchone()['oldest']
             remaining = int(LOCKOUT_SECONDS - (now - oldest)) if oldest else 0
             return True, remaining
 
@@ -79,17 +79,17 @@ def check_rate_limit(db, identifier=None, ip_address=None, user_id=None):
 
 
 def record_failed_attempt(db, identifier, ip_address, user_id=None):
-    """Record a failed login attempt in the database."""
+    """Record a failed login attempt in the database. v3.0: user_id parameter ignored."""
     db.execute(
-        'INSERT INTO login_attempts (identifier, ip_address, user_id, attempted_at) VALUES (?, ?, ?, ?)',
-        (identifier.lower(), ip_address, user_id, time.time()))
+        'INSERT INTO login_attempts (identifier, ip_address, attempted_at) VALUES (?, ?, ?)',
+        (identifier.lower(), ip_address, time.time()))
     db.commit()
 
 
 def clear_attempts(db, user_id, ip_address):
-    """Clear login attempts for a user after successful login."""
-    db.execute('DELETE FROM login_attempts WHERE user_id = ? OR ip_address = ?',
-               (user_id, ip_address))
+    """Clear login attempts after successful login. v3.0: only clears by ip_address."""
+    db.execute('DELETE FROM login_attempts WHERE ip_address = ?',
+               (ip_address,))
     db.commit()
 
 
@@ -191,18 +191,27 @@ def validate_schema():
         print("Run migrations first: python database/migrate.py")
         sys.exit(1)
 
-    # Create login_attempts table for persistent rate limiting if missing
+    # Create assistant_conversations and assistant_messages tables for AI conversations if missing
     db.execute('''
-        CREATE TABLE IF NOT EXISTS login_attempts (
-            attempt_id   INTEGER PRIMARY KEY AUTOINCREMENT,
-            identifier   TEXT NOT NULL,
-            ip_address   TEXT NOT NULL,
-            user_id      INTEGER,
-            attempted_at REAL NOT NULL
+        CREATE TABLE IF NOT EXISTS assistant_conversations (
+            conv_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id     INTEGER NOT NULL REFERENCES owners(owner_id) ON DELETE CASCADE,
+            title        TEXT,
+            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
         )
     ''')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_attempts_identifier ON login_attempts(identifier)')
-    db.execute('CREATE INDEX IF NOT EXISTS idx_attempts_ip ON login_attempts(ip_address)')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS assistant_messages (
+            msg_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            conv_id      INTEGER NOT NULL REFERENCES assistant_conversations(conv_id) ON DELETE CASCADE,
+            role         TEXT NOT NULL,
+            content      TEXT NOT NULL,
+            created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    ''')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_conv_owner ON assistant_conversations(owner_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_msg_conv ON assistant_messages(conv_id)')
     db.commit()
 
     db.close()
@@ -544,8 +553,8 @@ def list_owners():
     offset = (page - 1) * per_page
     owners = query_db(f'''
         SELECT o.owner_id, o.full_name, o.classification, o.contact_status, o.data_source,
-               o.phone_1, o.phone_1_verified, o.email_1, o.mailing_address, o.city, o.state,
-               o.date_of_birth, o.age, o.is_deceased, o.do_not_contact, o.reserved_for_user_id,
+               o.phone_1, o.email_1, o.mailing_address, o.city, o.state,
+               o.age, o.is_deceased, o.do_not_contact,
                o.has_bankruptcy, o.has_lien, o.has_judgment, o.has_evictions,
                o.has_foreclosures, o.has_debt, o.updated_at,
                (SELECT COUNT(*) FROM ownership_links ol WHERE ol.owner_id = o.owner_id) as section_count
@@ -581,50 +590,31 @@ def list_owners():
 @login_required
 def get_owner(oid):
     owner = query_db('''
-        SELECT owner_id, full_name, first_name, middle_name, last_name, suffix, entity_name,
+        SELECT owner_id, full_name, first_name, middle_name, last_name, suffix,
                phone_1, phone_2, phone_3, phone_4, phone_5, phone_6,
-               phone_1_source, phone_2_source, phone_3_source,
-               phone_4_source, phone_5_source, phone_6_source,
                phone_1_verified, phone_2_verified, phone_3_verified,
                phone_4_verified, phone_5_verified, phone_6_verified,
-               phone_1_verified_by, phone_1_verified_date,
-               phone_2_verified_by, phone_2_verified_date,
-               phone_3_verified_by, phone_3_verified_date,
-               phone_4_verified_by, phone_4_verified_date,
-               phone_5_verified_by, phone_5_verified_date,
-               phone_6_verified_by, phone_6_verified_date,
-               phone_1_last_seen, phone_2_last_seen, phone_3_last_seen,
-               phone_4_last_seen, phone_5_last_seen, phone_6_last_seen,
                phone_1_type, phone_2_type, phone_3_type,
-               phone_4_type, phone_5_type, phone_6_type,
+               phone_4_type, phone_5_type,
+               phone_work, phone_home, phone_mobile,
                email_1, email_2, email_3, email_4,
-               email_1_source, email_2_source, email_3_source, email_4_source,
-               email_1_last_seen, email_2_last_seen, email_3_last_seen, email_4_last_seen,
                mailing_address, city, state, zip_code,
-               alt_address, alt_city, alt_state, alt_zip,
                classification, contact_status, data_source, age,
-               date_of_birth, is_deceased, deceased_date,
+               is_deceased, date_of_birth,
                has_bankruptcy, has_lien, has_judgment, has_evictions,
                has_foreclosures, has_debt, relatives_json,
                do_not_contact, dnc_reason, dnc_date,
-               reserved_for_user_id, reserved_reason, reserved_date,
-               latitude, longitude, notes, created_at, updated_at
+               linkedin_url, facebook_url, latitude, longitude, notes, created_at, updated_at
         FROM owners WHERE owner_id = ?
     ''', (oid,), one=True)
     if not owner:
         return jsonify({'error': 'Owner not found'}), 404
 
-    # Add reserved-for user name if set
-    if owner.get('reserved_for_user_id'):
-        reserved_user = query_db('SELECT name FROM users WHERE user_id = ?',
-                                 (owner['reserved_for_user_id'],), one=True)
-        owner['reserved_for_name'] = reserved_user['name'] if reserved_user else None
-
     # Sections this owner is linked to
     sections = query_db('''
         SELECT s.section_id, s.display_name, s.status, s.exit_price, s.cost_free_price,
                ol.nra, ol.ownership_pct, ol.source, ol.interest_type,
-               u.name as assigned_user_name, p.name as parish_name
+               p.name as parish_name
         FROM ownership_links ol
         JOIN sections s ON ol.section_id = s.section_id
         LEFT JOIN parishes p ON s.parish_id = p.parish_id
@@ -634,20 +624,18 @@ def get_owner(oid):
 
     # Deals for this owner
     deals = query_db('''
-        SELECT d.*, ps.name as stage_name, s.display_name as section_name, u.name as assigned_name
+        SELECT d.*, ps.name as stage_name, s.display_name as section_name
         FROM deals d
         JOIN pipeline_stages ps ON d.stage_id = ps.stage_id
         JOIN sections s ON d.section_id = s.section_id
-        LEFT JOIN users u ON d.assigned_user_id = u.user_id
         WHERE d.owner_id = ?
         ORDER BY d.created_at DESC
     ''', (oid,))
 
     # Activities for this owner
     activities = query_db('''
-        SELECT a.*, u.name as user_name, s.display_name as section_name
+        SELECT a.*, s.display_name as section_name
         FROM activities a
-        LEFT JOIN users u ON a.user_id = u.user_id
         LEFT JOIN sections s ON a.section_id = s.section_id
         WHERE a.owner_id = ?
         ORDER BY a.created_at DESC
@@ -658,10 +646,29 @@ def get_owner(oid):
     aliases = query_db(
         'SELECT * FROM owner_aliases WHERE owner_id = ? ORDER BY alias_type', (oid,))
 
+    # Alternate addresses
+    alt_addresses = query_db(
+        'SELECT * FROM alt_addresses WHERE owner_id = ? ORDER BY alt_id', (oid,))
+
+    # Associated contacts (via associated_contacts table)
+    associated = query_db('''
+        SELECT ac.*,
+               CASE WHEN ac.owner_id_a = ? THEN ob.full_name ELSE oa.full_name END as assoc_name,
+               CASE WHEN ac.owner_id_a = ? THEN ob.phone_1 ELSE oa.phone_1 END as assoc_phone,
+               CASE WHEN ac.owner_id_a = ? THEN ob.email_1 ELSE oa.email_1 END as assoc_email,
+               CASE WHEN ac.owner_id_a = ? THEN ac.owner_id_b ELSE ac.owner_id_a END as assoc_id
+        FROM associated_contacts ac
+        LEFT JOIN owners oa ON ac.owner_id_a = oa.owner_id
+        LEFT JOIN owners ob ON ac.owner_id_b = ob.owner_id
+        WHERE ac.owner_id_a = ? OR ac.owner_id_b = ?
+    ''', (oid, oid, oid, oid, oid, oid))
+
     owner['sections'] = sections
     owner['deals'] = deals
     owner['activities'] = activities
     owner['aliases'] = aliases
+    owner['alt_addresses'] = alt_addresses
+    owner['associated_contacts'] = associated
 
     # Contact notes
     notes = query_db('''
@@ -672,26 +679,37 @@ def get_owner(oid):
     ''', (oid,))
     owner['contact_notes'] = notes
 
-    # Associated contacts loaded lazily via /api/owners/:id/associated
-    owner['associated_contacts'] = []
-
     return jsonify(owner)
 
 
 @app.route('/api/owners/<int:oid>/associated', methods=['GET'])
 @login_required
 def get_owner_associated(oid):
-    """Lazy-loaded associated contacts — called when user clicks the Associated tab."""
+    """Lazy-loaded associated contacts — includes both pre-computed associations and phone/email/address matches."""
     owner = query_db('SELECT phone_1, phone_2, phone_3, phone_4, phone_5, phone_6, '
-                     'phone_work, phone_home, phone_mobile, '
                      'email_1, email_2, email_3, email_4, '
                      'mailing_address, city FROM owners WHERE owner_id = ?', (oid,), one=True)
     if not owner:
         return jsonify([])
 
     associated = []
-    phones = [owner.get(f'phone_{i}') for i in range(1, 7)] + \
-             [owner.get('phone_work'), owner.get('phone_home'), owner.get('phone_mobile')]
+
+    # Pre-computed associations from associated_contacts table
+    precomputed = query_db('''
+        SELECT ac.*,
+               CASE WHEN ac.owner_id_a = ? THEN ob.full_name ELSE oa.full_name END as assoc_name,
+               CASE WHEN ac.owner_id_a = ? THEN ob.phone_1 ELSE oa.phone_1 END as assoc_phone,
+               CASE WHEN ac.owner_id_a = ? THEN ob.email_1 ELSE oa.email_1 END as assoc_email,
+               CASE WHEN ac.owner_id_a = ? THEN ac.owner_id_b ELSE ac.owner_id_a END as assoc_id
+        FROM associated_contacts ac
+        LEFT JOIN owners oa ON ac.owner_id_a = oa.owner_id
+        LEFT JOIN owners ob ON ac.owner_id_b = ob.owner_id
+        WHERE ac.owner_id_a = ? OR ac.owner_id_b = ?
+    ''', (oid, oid, oid, oid, oid, oid))
+    associated.extend(precomputed)
+
+    # Collect phones from phone_1 through phone_6
+    phones = [owner.get(f'phone_{i}') for i in range(1, 7)]
     phones = [p for p in phones if p]
 
     emails = [owner.get(f'email_{i}') for i in range(1, 5)]
@@ -699,6 +717,9 @@ def get_owner_associated(oid):
 
     addr = owner.get('mailing_address')
     city = owner.get('city')
+
+    seen_ids = {a.get('assoc_id') or a.get('owner_id_b') or a.get('owner_id_a') for a in associated}
+    seen_ids.add(oid)
 
     # Match on primary phone only (indexed) for speed
     if phones:
@@ -710,7 +731,8 @@ def get_owner_associated(oid):
             WHERE owner_id != ? AND phone_1 IN ({placeholders})
             LIMIT 25
         ''', [oid] + phones)
-        associated.extend(phone_matches)
+        associated.extend([m for m in phone_matches if m['owner_id'] not in seen_ids])
+        seen_ids.update(m['owner_id'] for m in phone_matches)
 
     if emails:
         placeholders = ','.join(['?'] * len(emails))
@@ -718,15 +740,13 @@ def get_owner_associated(oid):
             SELECT owner_id, full_name, phone_1, email_1, city, state, classification, contact_status,
                    'email' as match_type
             FROM owners
-            WHERE owner_id != ?
-              AND owner_id NOT IN ({",".join(str(a["owner_id"]) for a in associated) or "0"})
-              AND email_1 IN ({placeholders})
+            WHERE owner_id != ? AND email_1 IN ({placeholders})
             LIMIT 25
         ''', [oid] + emails)
-        associated.extend(email_matches)
+        associated.extend([m for m in email_matches if m['owner_id'] not in seen_ids])
+        seen_ids.update(m['owner_id'] for m in email_matches)
 
     if addr and city and len(addr) > 5:
-        seen_ids = {a['owner_id'] for a in associated}
         addr_matches = query_db('''
             SELECT owner_id, full_name, phone_1, email_1, city, state, classification, contact_status,
                    'address' as match_type
@@ -750,9 +770,8 @@ def update_owner(oid):
                'phone_work', 'phone_home', 'phone_mobile',
                'email_1', 'email_2', 'email_3', 'email_4',
                'classification', 'contact_status',
-               'age', 'is_deceased', 'notes', 'data_source',
+               'age', 'is_deceased', 'notes', 'data_source', 'date_of_birth',
                'do_not_contact', 'dnc_reason', 'dnc_date',
-               'reserved_for_user_id', 'reserved_reason', 'reserved_date',
                'linkedin_url', 'facebook_url']
 
     sets = []
@@ -782,10 +801,9 @@ def delete_owner_phone(oid, slot):
     """Delete a specific phone slot (1-6) from an owner."""
     if slot < 1 or slot > 6:
         return jsonify({'error': 'Invalid phone slot'}), 400
-    cols = [f'phone_{slot} = NULL', f'phone_{slot}_source = NULL',
-            f'phone_{slot}_verified = 0', f'phone_{slot}_verified_by = NULL',
-            f'phone_{slot}_verified_date = NULL', f'phone_{slot}_last_seen = NULL',
-            f'phone_{slot}_type = NULL']
+    cols = [f'phone_{slot} = NULL', f'phone_{slot}_verified = 0']
+    if slot <= 5:
+        cols.append(f'phone_{slot}_type = NULL')
     execute_db(f"UPDATE owners SET {', '.join(cols)}, updated_at = datetime('now') WHERE owner_id = ?", (oid,))
     execute_db('''INSERT INTO change_log (table_name, record_id, action, new_values)
                   VALUES ('owners', ?, 'delete_phone', ?)''',
@@ -799,9 +817,7 @@ def delete_owner_email(oid, slot):
     """Delete a specific email slot (1-4) from an owner."""
     if slot < 1 or slot > 4:
         return jsonify({'error': 'Invalid email slot'}), 400
-    cols = [f'email_{slot} = NULL', f'email_{slot}_source = NULL',
-            f'email_{slot}_last_seen = NULL']
-    execute_db(f"UPDATE owners SET {', '.join(cols)}, updated_at = datetime('now') WHERE owner_id = ?", (oid,))
+    execute_db(f"UPDATE owners SET email_{slot} = NULL, updated_at = datetime('now') WHERE owner_id = ?", (oid,))
     execute_db('''INSERT INTO change_log (table_name, record_id, action, new_values)
                   VALUES ('owners', ?, 'delete_email', ?)''',
                (oid, json.dumps({'slot': slot})))
@@ -869,24 +885,14 @@ def verify_phone(oid):
     if verify_col not in valid_fields:
         return jsonify({'error': 'Invalid phone field'}), 400
 
-    today = datetime.now().strftime('%Y-%m-%d')
-    by_col = f'{phone_field}_verified_by'
-    date_col = f'{phone_field}_verified_date'
-
-    if verified:
-        execute_db(f'UPDATE owners SET {verify_col} = 1, {by_col} = ?, {date_col} = ? WHERE owner_id = ?',
-                   (session['user_id'], today, oid))
-    else:
-        execute_db(f'UPDATE owners SET {verify_col} = 0, {by_col} = NULL, {date_col} = NULL WHERE owner_id = ?',
-                   (oid,))
+    # v3.0: simple toggle of verified status
+    execute_db(f'UPDATE owners SET {verify_col} = ? WHERE owner_id = ?',
+               (1 if verified else 0, oid))
 
     execute_db('''
         INSERT INTO change_log (table_name, record_id, action, new_values)
         VALUES ('owners', ?, 'verify_phone', ?)
-    ''', (oid, json.dumps({
-        verify_col: verified,
-        date_col: today if verified else None
-    })))
+    ''', (oid, json.dumps({verify_col: verified})))
 
     return jsonify({'message': 'Phone verification updated'})
 
@@ -904,9 +910,8 @@ def get_owner_activities(oid):
 
     offset = (page - 1) * per_page
     activities = query_db('''
-        SELECT a.*, u.name as user_name, s.display_name as section_name
+        SELECT a.*, s.display_name as section_name
         FROM activities a
-        LEFT JOIN users u ON a.user_id = u.user_id
         LEFT JOIN sections s ON a.section_id = s.section_id
         WHERE a.owner_id = ?
         ORDER BY a.created_at DESC
@@ -988,19 +993,13 @@ def list_deals():
     where = ['ps.pipeline_name = ?', 'd.status = ?']
     params = [pipeline, status]
 
-    if assigned:
-        where.append('d.assigned_user_id = ?')
-        params.append(int(assigned))
-
     deals = query_db(f'''
         SELECT d.*, ps.name as stage_name, ps.sort_order,
-               o.full_name as owner_name, s.display_name as section_name,
-               u.name as assigned_name
+               o.full_name as owner_name, s.display_name as section_name
         FROM deals d
         JOIN pipeline_stages ps ON d.stage_id = ps.stage_id
         LEFT JOIN owners o ON d.owner_id = o.owner_id
         JOIN sections s ON d.section_id = s.section_id
-        LEFT JOIN users u ON d.assigned_user_id = u.user_id
         WHERE {' AND '.join(where)}
         ORDER BY ps.sort_order, d.created_at DESC
     ''', params)
@@ -1053,14 +1052,12 @@ def get_deal(did):
                o.full_name as owner_name, o.phone_1 as owner_phone, o.email_1 as owner_email,
                o.city as owner_city, o.state as owner_state, o.classification as owner_classification,
                s.display_name as section_name, s.exit_price, s.cost_free_price,
-               s.parish_id, p.name as parish_name,
-               u.name as assigned_name
+               s.parish_id, p.name as parish_name
         FROM deals d
         JOIN pipeline_stages ps ON d.stage_id = ps.stage_id
         LEFT JOIN owners o ON d.owner_id = o.owner_id
         LEFT JOIN sections s ON d.section_id = s.section_id
         LEFT JOIN parishes p ON s.parish_id = p.parish_id
-        LEFT JOIN users u ON d.assigned_user_id = u.user_id
         WHERE d.deal_id = ?
     ''', (did,), one=True)
     if not deal:
@@ -1068,9 +1065,8 @@ def get_deal(did):
 
     # Activities for this deal
     activities = query_db('''
-        SELECT a.*, u.name as user_name
+        SELECT a.*
         FROM activities a
-        LEFT JOIN users u ON a.user_id = u.user_id
         WHERE a.deal_id = ? OR (a.owner_id = ? AND a.section_id = ?)
         ORDER BY a.created_at DESC LIMIT 50
     ''', (did, deal['owner_id'], deal['section_id']))
@@ -1078,9 +1074,8 @@ def get_deal(did):
 
     # Stage history from change_log
     history = query_db('''
-        SELECT cl.*, u.name as user_name
+        SELECT cl.*
         FROM change_log cl
-        LEFT JOIN users u ON cl.user_id = u.user_id
         WHERE cl.table_name = 'deals' AND cl.record_id = ?
         ORDER BY cl.changed_at DESC LIMIT 20
     ''', (did,))
@@ -1156,7 +1151,6 @@ def list_activities():
     """List all activities with optional filters and pagination."""
     page = max(1, int(request.args.get('page', 1)))
     per_page = min(max(1, int(request.args.get('per_page', 50))), 250)
-    user_id = request.args.get('user_id', '')
     activity_type = request.args.get('type', '')
     start_date = request.args.get('start_date', '')
     end_date = request.args.get('end_date', '')
@@ -1164,9 +1158,6 @@ def list_activities():
     where = []
     params = []
 
-    if user_id:
-        where.append("a.user_id = ?")
-        params.append(int(user_id))
     if activity_type:
         where.append("a.type = ?")
         params.append(activity_type)
@@ -1184,9 +1175,8 @@ def list_activities():
 
     offset = (page - 1) * per_page
     activities = query_db(f'''
-        SELECT a.*, u.name as user_name, o.full_name as owner_name, s.display_name as section_name
+        SELECT a.*, o.full_name as owner_name, s.display_name as section_name
         FROM activities a
-        LEFT JOIN users u ON a.user_id = u.user_id
         LEFT JOIN owners o ON a.owner_id = o.owner_id
         LEFT JOIN sections s ON a.section_id = s.section_id
         WHERE {where_clause}
@@ -1208,12 +1198,12 @@ def list_activities():
 def create_activity():
     data = request.json
     aid = execute_db('''
-        INSERT INTO activities (owner_id, section_id, deal_id, user_id, type, subject, body,
+        INSERT INTO activities (owner_id, section_id, deal_id, type, subject, body,
                                call_duration, call_outcome, email_direction, email_subject,
                                letter_type, letter_sent_date, is_pinned)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (data['owner_id'], data.get('section_id'), data.get('deal_id'),
-          session['user_id'], data['type'], data.get('subject'), data.get('body'),
+          data['type'], data.get('subject'), data.get('body'),
           data.get('call_duration'), data.get('call_outcome'),
           data.get('email_direction'), data.get('email_subject'),
           data.get('letter_type'), data.get('letter_sent_date'),
@@ -1489,7 +1479,7 @@ ASSISTANT_QUERY_INTENTS = {
         'description': 'Search sections by name, township, range, parish, status, or operator',
         'sql': '''SELECT s.section_id, s.display_name, s.section_number, s.township, s.range,
                          s.status, s.exit_price, s.cost_free_price,
-                         p.name as parish_name, o.name as operator_name, u.name as assigned_to,
+                         p.name as parish_name, o.name as operator_name,
                          (SELECT COUNT(*) FROM ownership_links ol WHERE ol.section_id = s.section_id) as owner_count
                   FROM sections s
                   LEFT JOIN parishes p ON s.parish_id = p.parish_id
@@ -1517,25 +1507,21 @@ ASSISTANT_QUERY_INTENTS = {
         'requires': ['owner_id']
     },
     'deal_summary': {
-        'description': 'Summarize deals by status, stage, or assigned user',
+        'description': 'Summarize deals by status and stage',
         'sql': '''SELECT ps.name as stage, d.status, COUNT(*) as deal_count,
-                         COALESCE(SUM(d.value), 0) as total_value,
-                         u.name as assigned_to
+                         COALESCE(SUM(d.value), 0) as total_value
                   FROM deals d
                   LEFT JOIN pipeline_stages ps ON d.stage_id = ps.stage_id
-                  LEFT JOIN users u ON d.assigned_user_id = u.user_id
                   WHERE {conditions}
-                  GROUP BY ps.name, d.status, u.name
+                  GROUP BY ps.name, d.status
                   ORDER BY ps.sort_order LIMIT {limit}''',
         'allowed_filters': ['status']
     },
     'recent_activities': {
-        'description': 'Show recent activities, optionally filtered by type or user',
+        'description': 'Show recent activities, optionally filtered by type',
         'sql': '''SELECT a.activity_id, a.type, a.subject, a.created_at,
-                         u.name as user_name, o.full_name as owner_name,
-                         s.display_name as section_name
+                         o.full_name as owner_name, s.display_name as section_name
                   FROM activities a
-                  LEFT JOIN users u ON a.user_id = u.user_id
                   LEFT JOIN owners o ON a.owner_id = o.owner_id
                   LEFT JOIN sections s ON a.section_id = s.section_id
                   WHERE {conditions}
