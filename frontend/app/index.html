@@ -127,15 +127,18 @@
                 </div>
                 <div class="table-container"><table class="compact"><thead><tr>
                     <th style="width:30px"><input type="checkbox" id="sections-select-all" onchange="toggleAllSections(this)"></th>
-                    <th class="sortable" data-sort="section_id" onclick="sortSections('section_id')">ID <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-sort="display_name" onclick="sortSections('display_name')">Name <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-sort="parish_name" onclick="sortSections('parish_name')">County/Parish <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="parish_name" onclick="sortSections('parish_name')">Parish <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="display_name" onclick="sortSections('display_name')">S-T-R <span class="sort-arrow"></span></th>
                     <th class="sortable" data-sort="status" onclick="sortSections('status')">Status <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-sort="total_contacts" onclick="sortSections('total_contacts')">People <span class="sort-arrow"></span></th>
-                    <th class="sortable" data-sort="exit_price" onclick="sortSections('exit_price')">Exit $/NRA <span class="sort-arrow"></span></th>
+                    <th class="sortable" data-sort="exit_price" onclick="sortSections('exit_price')">Cost-Bearing $/NRA <span class="sort-arrow"></span></th>
                     <th class="sortable" data-sort="cost_free_price" onclick="sortSections('cost_free_price')">Cost-Free $/NRA <span class="sort-arrow"></span></th>
                     <th class="sortable active desc" data-sort="pricing_date" onclick="sortSections('pricing_date')">Pricing Date <span class="sort-arrow">▼</span></th>
+                    <th>Days Since</th>
+                    <th>Price Chg %</th>
                     <th class="sortable" data-sort="operator_name" onclick="sortSections('operator_name')">Operator <span class="sort-arrow"></span></th>
+                    <th>Ownership Data</th>
+                    <th>Notes</th>
+                    <th class="sortable" data-sort="deck_name" onclick="sortSections('deck_name')">Deck Name <span class="sort-arrow"></span></th>
                 </tr></thead><tbody id="sections-table"></tbody></table></div>
                 <div class="pagination">
                     <button onclick="loadSections(1)" class="bs bsm">« First</button>

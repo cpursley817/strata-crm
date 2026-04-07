@@ -106,3 +106,24 @@ async function loadParishes() {
     });
     parishesLoaded = true;
 }
+
+let operatorsLoaded = false;
+
+/**
+ * loadOperators()
+ * Populates the operator filter dropdown on the Sections page
+ */
+async function loadOperators() {
+    if (operatorsLoaded) return;
+    const operators = await apiCall('/sections/operators');
+    if (!operators) return;
+    const select = document.getElementById('sections-operator-filter');
+    while (select.options.length > 1) select.remove(1);
+    operators.forEach(o => {
+        const opt = document.createElement('option');
+        opt.value = o.operator_id;
+        opt.textContent = `${o.name} (${o.section_count})`;
+        select.appendChild(opt);
+    });
+    operatorsLoaded = true;
+}

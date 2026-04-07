@@ -46,11 +46,13 @@ async function loadSections(page = 1) {
     const search = document.getElementById('sections-search').value;
     const parish = document.getElementById('sections-parish-filter').value;
     const status = document.getElementById('sections-status-filter').value;
+    const operator = document.getElementById('sections-operator-filter').value;
 
     let url = `/sections?page=${page}&per_page=25&sort=${sectionsSortCol}&order=${sectionsSortOrder}`;
     if (search) url += `&search=${encodeURIComponent(search)}`;
     if (parish) url += `&parish=${parish}`;
     if (status) url += `&status=${encodeURIComponent(status)}`;
+    if (operator) url += `&operator_id=${operator}`;
 
     const data = await apiCall(url);
     if (!data) return;
@@ -66,22 +68,17 @@ async function loadSections(page = 1) {
     (data.sections || []).forEach(s => {
         const row = tbody.insertRow();
         row.style.cursor = 'pointer';
-        row.onclick = (e) => { if (e.target.type !== 'checkbox') viewSectionDetail(s.section_id); };
+        row.onclick = (e) => { if (e.target.type !== 'checkbox' && e.target.tagName !== 'SELECT') viewSectionDetail(s.section_id); };
 
         // Checkbox
         const checkCell = row.insertCell();
         checkCell.innerHTML = `<input type="checkbox" class="section-check" value="${s.section_id}">`;
 
-        // ID (formatted)
-        const idCell = row.insertCell();
-        idCell.style.cssText = 'font-size:10px;color:var(--td);font-family:monospace';
-        idCell.textContent = formatDisplayId(s.section_id, 'S');
+        // Parish
+        row.insertCell().textContent = s.parish_name || '-';
 
-        // Name
+        // S-T-R (display_name)
         row.insertCell().innerHTML = `<span style="font-weight:500">${esc(s.display_name || '')}</span>`;
-
-        // County/Parish
-        row.insertCell().textContent = s.parish_name || '';
 
         // Status dropdown
         const statusCell = row.insertCell();
@@ -94,14 +91,11 @@ async function loadSections(page = 1) {
         selHtml += '</select>';
         statusCell.innerHTML = selHtml;
 
-        // People count
-        row.insertCell().textContent = s.total_contacts || s.people_count || '0';
-
-        // Exit $/NRA
-        const bbrCell = row.insertCell();
-        bbrCell.style.fontWeight = '500';
-        bbrCell.style.color = s.exit_price ? 'var(--g)' : 'var(--td)';
-        bbrCell.textContent = s.exit_price ? formatCurrency(s.exit_price) : '-';
+        // Cost-Bearing $/NRA (exit_price)
+        const cbCell = row.insertCell();
+        cbCell.style.fontWeight = '500';
+        cbCell.style.color = s.exit_price ? 'var(--g)' : 'var(--td)';
+        cbCell.textContent = s.exit_price ? formatCurrency(s.exit_price) : '-';
 
         // Cost-Free $/NRA
         const cfCell = row.insertCell();
@@ -112,16 +106,64 @@ async function loadSections(page = 1) {
         // Pricing Date with recency coloring
         const pdCell = row.insertCell();
         const pDate = s.pricing_date;
+        let daysSince = null;
         if (pDate) {
-            const days = Math.floor((Date.now() - new Date(pDate).getTime()) / 86400000);
-            pdCell.style.color = days <= 30 ? 'var(--g)' : days <= 90 ? 'var(--y)' : 'var(--r)';
+            daysSince = Math.floor((Date.now() - new Date(pDate).getTime()) / 86400000);
+            pdCell.style.color = daysSince <= 30 ? 'var(--g)' : daysSince <= 90 ? 'var(--y)' : 'var(--r)';
         } else {
             pdCell.style.color = 'var(--td)';
         }
         pdCell.textContent = pDate || '-';
 
+        // Days Since Price Update (calculated)
+        const dsCell = row.insertCell();
+        dsCell.style.fontSize = '12px';
+        if (daysSince !== null) {
+            dsCell.style.color = daysSince <= 30 ? 'var(--g)' : daysSince <= 90 ? 'var(--y)' : 'var(--r)';
+            dsCell.textContent = daysSince + 'd';
+        } else {
+            dsCell.style.color = 'var(--td)';
+            dsCell.textContent = '-';
+        }
+
+        // Price Change % (calculated from prev_exit_price)
+        const pcCell = row.insertCell();
+        pcCell.style.fontSize = '12px';
+        pcCell.style.fontWeight = '500';
+        if (s.exit_price && s.prev_exit_price && s.prev_exit_price > 0) {
+            const pctChange = ((s.exit_price - s.prev_exit_price) / s.prev_exit_price * 100);
+            if (pctChange > 0) {
+                pcCell.style.color = 'var(--g)';
+                pcCell.textContent = '+' + pctChange.toFixed(1) + '%';
+            } else if (pctChange < 0) {
+                pcCell.style.color = 'var(--r)';
+                pcCell.textContent = pctChange.toFixed(1) + '%';
+            } else {
+                pcCell.style.color = 'var(--td)';
+                pcCell.textContent = '0%';
+            }
+        } else {
+            pcCell.style.color = 'var(--td)';
+            pcCell.textContent = '-';
+        }
+
         // Operator
         row.insertCell().textContent = s.operator_name || '-';
+
+        // Ownership Data
+        const odCell = row.insertCell();
+        odCell.style.cssText = 'font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        odCell.textContent = s.ownership_data || '-';
+        if (s.ownership_data) odCell.title = s.ownership_data;
+
+        // Section Notes
+        const snCell = row.insertCell();
+        snCell.style.cssText = 'font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        snCell.textContent = s.section_notes || '-';
+        if (s.section_notes) snCell.title = s.section_notes;
+
+        // Deck Name
+        row.insertCell().textContent = s.deck_name || '-';
     });
 
     document.getElementById('sections-page-display').textContent = currentSectionsPage;
@@ -197,13 +239,13 @@ async function viewSectionDetail(sectionId) {
     // ── PRICING & INFO CARDS ──
     h += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px">
         <div class="stat-card success">
-            <div class="stat-label">Exit $/NRA</div>
+            <div class="stat-label">Cost-Bearing $/NRA</div>
             <div class="stat-value" style="font-size:22px">${data.exit_price ? formatCurrency(data.exit_price) : 'N/A'}</div>
         </div>
         <div class="stat-card success">
             <div class="stat-label">Cost-Free $/NRA</div>
             <div class="stat-value" style="font-size:22px">${data.cost_free_price ? formatCurrency(data.cost_free_price) : 'N/A'}</div>
-            ${data.prev_cost_free ? `<div style="font-size:11px;color:var(--td);margin-top:4px">Prev: ${formatCurrency(data.prev_cost_free)}</div>` : ''}
+            ${data.prev_cost_free_price ? `<div style="font-size:11px;color:var(--td);margin-top:4px">Prev: ${formatCurrency(data.prev_cost_free_price)}</div>` : ''}
         </div>
         <div class="stat-card">
             <div class="stat-label">Pricing Date</div>
@@ -249,7 +291,7 @@ async function viewSectionDetail(sectionId) {
         });
         h += `</div>
             <div style="display:flex;gap:12px;margin-top:8px;font-size:10px;color:var(--td)">
-                <span><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:1px;margin-right:3px"></span>Exit $/NRA</span>
+                <span><span style="display:inline-block;width:8px;height:8px;background:var(--g);border-radius:1px;margin-right:3px"></span>Cost-Bearing $/NRA</span>
                 <span><span style="display:inline-block;width:8px;height:8px;background:var(--ac);border-radius:1px;margin-right:3px"></span>Cost-Free $/NRA</span>
             </div>
         </div>`;
@@ -257,10 +299,18 @@ async function viewSectionDetail(sectionId) {
 
     // ── LEGAL & DETAILS ──
     h += `<div class="card" style="margin-bottom:24px">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
             <div>
                 <div style="font-size:11px;color:var(--td);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Section / Township / Range</div>
                 <div style="font-size:14px">${[data.section_number, data.township, data.range].filter(Boolean).join(' · ') || 'N/A'}</div>
+            </div>
+            <div>
+                <div style="font-size:11px;color:var(--td);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Deck Name</div>
+                <div style="font-size:14px">${esc(data.deck_name || 'N/A')}</div>
+            </div>
+            <div>
+                <div style="font-size:11px;color:var(--td);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Ownership Data</div>
+                <div style="font-size:14px">${esc(data.ownership_data || 'N/A')}</div>
             </div>
         </div>
         ${data.section_notes ? `<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--b)">
@@ -315,7 +365,6 @@ async function viewSectionDetail(sectionId) {
                 <th style="text-align:left;padding:8px">Owner</th>
                 <th style="text-align:left;padding:8px">Stage</th>
                 <th style="text-align:right;padding:8px">Value</th>
-                <th style="text-align:left;padding:8px">Assigned</th>
             </tr></thead><tbody>`;
         data.deals.forEach(d => {
             h += `<tr>
@@ -323,7 +372,6 @@ async function viewSectionDetail(sectionId) {
                 <td style="padding:8px;color:var(--ac);cursor:pointer" onclick="viewOwnerDetail(${d.owner_id})">${esc(d.owner_name || '')}</td>
                 <td style="padding:8px">${statusBadge(d.stage_name || '')}</td>
                 <td style="padding:8px;text-align:right;font-weight:500;color:var(--g)">${formatCurrency(d.value || 0)}</td>
-                <td style="padding:8px;font-size:12px">${esc(d.assigned_name || '')}</td>
             </tr>`;
         });
         h += '</tbody></table>';
@@ -338,9 +386,8 @@ async function viewSectionDetail(sectionId) {
         h += `<table style="width:100%;border-collapse:collapse;font-size:13px">
             <thead><tr>
                 <th style="text-align:left;padding:8px">Date</th>
-                <th style="text-align:right;padding:8px">Exit Price</th>
-                <th style="text-align:right;padding:8px">CF Price</th>
-                <th style="text-align:left;padding:8px">Changed By</th>
+                <th style="text-align:right;padding:8px">Cost-Bearing</th>
+                <th style="text-align:right;padding:8px">Cost-Free</th>
                 <th style="text-align:left;padding:8px">Notes</th>
             </tr></thead><tbody>`;
         data.pricing_history.forEach(p => {
@@ -348,7 +395,6 @@ async function viewSectionDetail(sectionId) {
                 <td style="padding:8px">${p.effective_date || ''}</td>
                 <td style="padding:8px;text-align:right;font-weight:500;color:var(--g)">${formatCurrency(p.exit_price || 0)}</td>
                 <td style="padding:8px;text-align:right;font-weight:500;color:var(--g)">${formatCurrency(p.cost_free_price || 0)}</td>
-                <td style="padding:8px;font-size:12px">${esc(p.changed_by_name || '')}</td>
                 <td style="padding:8px;font-size:12px;color:var(--td)">${esc(p.notes || '')}</td>
             </tr>`;
         });

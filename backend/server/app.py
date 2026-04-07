@@ -293,9 +293,6 @@ def list_sections():
     if status:
         where.append("s.status = ?")
         params.append(status)
-    if assigned:
-        where.append("s.assigned_user_id = ?")
-        params.append(int(assigned))
     if operator:
         where.append("s.operator_id = ?")
         params.append(int(operator))
@@ -305,7 +302,7 @@ def list_sections():
     # Validate sort column
     valid_sorts = {'display_name', 'section_number', 'township', 'range', 'status',
                    'exit_price', 'cost_free_price', 'people_count', 'updated_at', 'created_at',
-                   'pricing_date', 'parish_name', 'operator_name', 'assigned_user_name', 'total_contacts'}
+                   'pricing_date', 'parish_name', 'operator_name', 'total_contacts', 'deck_name'}
     if sort not in valid_sorts:
         sort = 'pricing_date'
     # Handle joined column sorts (need table alias)
@@ -314,8 +311,6 @@ def list_sections():
         sort_col = 'p.name'
     elif sort in ('operator_name',):
         sort_col = 'o.name'
-    elif sort in ('assigned_user_name',):
-        sort_col = 'u.name'
     elif sort == 'total_contacts':
         sort_col = 'total_contacts'
     else:
@@ -328,10 +323,18 @@ def list_sections():
     offset = (page - 1) * per_page
     sections = query_db(f'''
         SELECT s.*, p.name as parish_name, o.name as operator_name,
-               (SELECT COUNT(*) FROM ownership_links ol WHERE ol.section_id = s.section_id) as total_contacts
+               (SELECT COUNT(*) FROM ownership_links ol WHERE ol.section_id = s.section_id) as total_contacts,
+               prev_ph.exit_price as prev_exit_price,
+               prev_ph.cost_free_price as prev_cost_free_price,
+               prev_ph.effective_date as prev_pricing_date
         FROM sections s
         LEFT JOIN parishes p ON s.parish_id = p.parish_id
         LEFT JOIN operators o ON s.operator_id = o.operator_id
+        LEFT JOIN pricing_history prev_ph ON prev_ph.pricing_id = (
+            SELECT ph2.pricing_id FROM pricing_history ph2
+            WHERE ph2.section_id = s.section_id AND ph2.effective_date < s.pricing_date
+            ORDER BY ph2.effective_date DESC LIMIT 1
+        )
         WHERE {where_clause}
         ORDER BY {sort_col} {order} NULLS LAST
         LIMIT ? OFFSET ?
@@ -373,11 +376,10 @@ def get_section(sid):
 
     # Get deals for this section
     deals = query_db('''
-        SELECT d.*, ps.name as stage_name, o.full_name as owner_name, u.name as assigned_name
+        SELECT d.*, ps.name as stage_name, o.full_name as owner_name
         FROM deals d
         LEFT JOIN pipeline_stages ps ON d.stage_id = ps.stage_id
         LEFT JOIN owners o ON d.owner_id = o.owner_id
-        LEFT JOIN users u ON d.assigned_user_id = u.user_id
         WHERE d.section_id = ?
         ORDER BY d.created_at DESC
     ''', (sid,))
@@ -401,7 +403,7 @@ def get_section(sid):
 def update_section(sid):
     data = request.json
     allowed = ['exit_price', 'cost_free_price', 'pricing_date', 'operator_id',
-               'status', 'section_notes', 'ownership_data']
+               'status', 'section_notes', 'ownership_data', 'deck_name']
 
     sets = []
     params = []
@@ -430,9 +432,9 @@ def update_section(sid):
 
     # Log the change
     execute_db('''
-        INSERT INTO change_log (user_id, table_name, record_id, action, new_values)
-        VALUES (?, 'sections', ?, 'update', ?)
-    ''', (session['user_id'], sid, json.dumps(data)))
+        INSERT INTO change_log (table_name, record_id, action, new_values)
+        VALUES ('sections', ?, 'update', ?)
+    ''', (sid, json.dumps(data)))
 
     return jsonify({'message': 'Section updated'})
 
@@ -451,6 +453,21 @@ def get_parishes():
     ''')
 
     return jsonify(parishes)
+
+
+@app.route('/api/sections/operators', methods=['GET'])
+@login_required
+def get_operators():
+    """Get operators with section counts for filters."""
+    operators = query_db('''
+        SELECT o.operator_id, o.name,
+               COUNT(s.section_id) as section_count
+        FROM operators o
+        LEFT JOIN sections s ON o.operator_id = s.operator_id
+        GROUP BY o.operator_id, o.name
+        ORDER BY o.name
+    ''')
+    return jsonify(operators)
 
 
 # ---------------------------------------------------------------------------
@@ -752,9 +769,9 @@ def update_owner(oid):
     execute_db(f"UPDATE owners SET {', '.join(sets)} WHERE owner_id = ?", params)
 
     execute_db('''
-        INSERT INTO change_log (user_id, table_name, record_id, action, new_values)
-        VALUES (?, 'owners', ?, 'update', ?)
-    ''', (session['user_id'], oid, json.dumps(data)))
+        INSERT INTO change_log (table_name, record_id, action, new_values)
+        VALUES ('owners', ?, 'update', ?)
+    ''', (oid, json.dumps(data)))
 
     return jsonify({'message': 'Owner updated'})
 
@@ -770,9 +787,9 @@ def delete_owner_phone(oid, slot):
             f'phone_{slot}_verified_date = NULL', f'phone_{slot}_last_seen = NULL',
             f'phone_{slot}_type = NULL']
     execute_db(f"UPDATE owners SET {', '.join(cols)}, updated_at = datetime('now') WHERE owner_id = ?", (oid,))
-    execute_db('''INSERT INTO change_log (user_id, table_name, record_id, action, new_values)
-                  VALUES (?, 'owners', ?, 'delete_phone', ?)''',
-               (session['user_id'], oid, json.dumps({'slot': slot})))
+    execute_db('''INSERT INTO change_log (table_name, record_id, action, new_values)
+                  VALUES ('owners', ?, 'delete_phone', ?)''',
+               (oid, json.dumps({'slot': slot})))
     return jsonify({'message': f'Phone {slot} deleted'})
 
 
@@ -785,9 +802,9 @@ def delete_owner_email(oid, slot):
     cols = [f'email_{slot} = NULL', f'email_{slot}_source = NULL',
             f'email_{slot}_last_seen = NULL']
     execute_db(f"UPDATE owners SET {', '.join(cols)}, updated_at = datetime('now') WHERE owner_id = ?", (oid,))
-    execute_db('''INSERT INTO change_log (user_id, table_name, record_id, action, new_values)
-                  VALUES (?, 'owners', ?, 'delete_email', ?)''',
-               (session['user_id'], oid, json.dumps({'slot': slot})))
+    execute_db('''INSERT INTO change_log (table_name, record_id, action, new_values)
+                  VALUES ('owners', ?, 'delete_email', ?)''',
+               (oid, json.dumps({'slot': slot})))
     return jsonify({'message': f'Email {slot} deleted'})
 
 
@@ -864,11 +881,10 @@ def verify_phone(oid):
                    (oid,))
 
     execute_db('''
-        INSERT INTO change_log (user_id, table_name, record_id, action, new_values)
-        VALUES (?, 'owners', ?, 'verify_phone', ?)
-    ''', (session['user_id'], oid, json.dumps({
+        INSERT INTO change_log (table_name, record_id, action, new_values)
+        VALUES ('owners', ?, 'verify_phone', ?)
+    ''', (oid, json.dumps({
         verify_col: verified,
-        by_col: session['user_id'] if verified else None,
         date_col: today if verified else None
     })))
 
@@ -1106,29 +1122,21 @@ def update_deal(did):
 @login_required
 def delete_deal(did):
     """Delete a deal and its stage history. Requires assignment or admin role."""
-    deal = query_db('SELECT deal_id, title, owner_id, section_id, value, status, assigned_user_id FROM deals WHERE deal_id = ?',
+    deal = query_db('SELECT deal_id, title, owner_id, section_id, value, status FROM deals WHERE deal_id = ?',
                     (did,), one=True)
     if not deal:
         return jsonify({'error': 'Deal not found'}), 404
-
-    # Authorization: only assigned user or admin can delete
-    user_id = session['user_id']
-    user = query_db('SELECT role FROM users WHERE user_id = ?', (user_id,), one=True)
-    is_admin = user and user.get('role') in ('admin', 'manager')
-    if deal['assigned_user_id'] != user_id and not is_admin:
-        return jsonify({'error': 'Not authorized to delete this deal'}), 403
 
     # Atomic delete with structured audit
     db = get_db()
     try:
         db.execute('''
-            INSERT INTO change_log (table_name, record_id, field_name, old_value, new_value, user_id)
-            VALUES ('deals', ?, 'action', ?, 'DELETED', ?)
+            INSERT INTO change_log (table_name, record_id, action, old_values)
+            VALUES ('deals', ?, 'delete', ?)
         ''', (did, json.dumps({
             'title': deal['title'], 'status': deal['status'], 'value': deal['value'],
-            'owner_id': deal['owner_id'], 'section_id': deal['section_id'],
-            'assigned_user_id': deal['assigned_user_id']
-        }), user_id))
+            'owner_id': deal['owner_id'], 'section_id': deal['section_id']
+        })))
         db.execute('DELETE FROM deal_stage_history WHERE deal_id = ?', (did,))
         db.execute('DELETE FROM deals WHERE deal_id = ?', (did,))
         db.commit()
@@ -1345,20 +1353,23 @@ def get_stats():
 @app.route('/api/dashboard', methods=['GET'])
 @login_required
 def dashboard():
-    uid = session['user_id']
-
-    # My sections
+    # My sections (single user — count all)
     my_sections = query_db('''
-        SELECT COUNT(*) as cnt FROM sections WHERE assigned_user_id = ?
-    ''', (uid,), one=True)['cnt']
+        SELECT COUNT(*) as cnt FROM sections
+    ''', one=True)['cnt']
+
+    # Total contacts
+    total_contacts = query_db('''
+        SELECT COUNT(*) as cnt FROM owners
+    ''', one=True)['cnt']
 
     # My open deals
     my_deals = query_db('''
         SELECT COUNT(*) as cnt, COALESCE(SUM(value), 0) as total_value
-        FROM deals WHERE assigned_user_id = ? AND status = 'open'
-    ''', (uid,), one=True)
+        FROM deals WHERE status = 'open'
+    ''', one=True)
 
-    # Recent changes to my sections
+    # Recent changes
     recent_changes = query_db('''
         SELECT cl.*
         FROM change_log cl
@@ -1372,15 +1383,15 @@ def dashboard():
                COUNT(d.deal_id) as deal_count,
                COALESCE(SUM(d.value), 0) as stage_value
         FROM pipeline_stages ps
-        LEFT JOIN deals d ON ps.stage_id = d.stage_id
-            AND d.assigned_user_id = ? AND d.status = 'open'
+        LEFT JOIN deals d ON ps.stage_id = d.stage_id AND d.status = 'open'
         WHERE ps.pipeline_name = 'Haynesville'
         GROUP BY ps.stage_id
         ORDER BY ps.sort_order
-    ''', (uid,))
+    ''')
 
     return jsonify({
         'my_sections': my_sections,
+        'total_contacts': total_contacts,
         'my_open_deals': my_deals['cnt'],
         'my_deal_value': my_deals['total_value'],
         'recent_changes': recent_changes,
@@ -1783,9 +1794,9 @@ def confirm_assistant_action():
             return jsonify({'error': 'Missing owner_id or new_status'}), 400
         execute_db('UPDATE owners SET contact_status = ? WHERE owner_id = ?',
                   (new_status, owner_id))
-        execute_db('''INSERT INTO change_log (user_id, table_name, record_id, action, new_values)
-                      VALUES (?, 'owners', ?, 'assistant_update', ?)''',
-                   (session['user_id'], owner_id, json.dumps({'contact_status': new_status})))
+        execute_db('''INSERT INTO change_log (table_name, record_id, action, new_values)
+                      VALUES ('owners', ?, 'assistant_update', ?)''',
+                   (owner_id, json.dumps({'contact_status': new_status})))
         return jsonify({'response': f'Updated contact {owner_id} status to {new_status}', 'type': 'action'})
 
     elif action == 'create_deal':

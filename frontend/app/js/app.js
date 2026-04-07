@@ -87,7 +87,7 @@ function setPage(pageName) {
     if (pageEl) {
         pageEl.classList.add('active');
         if (pageName === 'home') loadDashboard();
-        else if (pageName === 'sections') { loadParishes(); loadSections(); }
+        else if (pageName === 'sections') { loadParishes(); loadOperators(); loadSections(); }
         else if (pageName === 'owners') { loadOwnerStates(); loadOwners(); }
         else if (pageName === 'pipeline') loadPipeline();
         else if (pageName === 'map') setTimeout(() => initMap(), 100);

@@ -77,6 +77,7 @@ CREATE TABLE sections (
     status          TEXT NOT NULL DEFAULT 'ACTIVE', -- ACTIVE, INACTIVE, EXHAUSTED, NO PRICE
     section_notes   TEXT,
     ownership_data  TEXT,
+    deck_name       TEXT,                          -- Pay deck name
 
     -- Migration tracking
     pipedrive_id    INTEGER,
